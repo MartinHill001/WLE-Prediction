@@ -1,0 +1,99 @@
+---
+title: "WLE Prediction"
+author: "Martin Hill"
+date: "5 February 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warnings = FALSE)
+```
+
+##Introduction
+Source material has been taken from the Human Activity Recognition Project <http://groupware.les.inf.puc-rio.br/har>.
+This contains useful data by which to classify (the classe column) the type of dumbbell exercise being performed (classe A being the correct exercise) based on measurements taken from different parts of the body.
+
+The purpose is to find a suitable model to predict the outcome of a test set and the error that is associated with the prediction.
+
+##Preparation of provided data sets
+Here there were many missing values and columns where the information is redundant for finding the model.
+
+```{r Dataset Preparation}
+testing<-read.csv("pml-testing.csv",na.strings=c("", "NA"))
+training<-read.csv("pml-training.csv",na.strings=c("", "NA"))
+#for quick processing of code to test
+#training<-training[sample(nrow(training), 1000), ]
+filledcols<-colnames(training[,colSums(is.na(training))==0])
+drops <- c("X","user_name","raw_timestamp_part_1","raw_timestamp_part_2","cvtd_timestamp","new_window","num_window")
+training<-training[,filledcols]
+training<-training[, !(names(training) %in% drops)]
+filledcolsTr<-filledcols[1:59]#classe not in training
+testing<-testing[, filledcolsTr]
+testing<-testing[, !(names(testing) %in% drops)]
+```
+
+##Creation of a Verification data set
+This will be used to calculate the out of sample error - this is kept seperate from the training set
+
+```{r Verfication}
+set.seed(3013)
+library(caret)
+#Split training set for verfication
+inVer = createDataPartition(training$classe, p = 3/10)[[1]]
+training = training[ inVer,]
+trainver= training[ -inVer,]
+```
+
+##Reducing the number of 53 remaing variables to the top 20
+Here we used random forest to 
+```{r Reducing Variables}
+fitRf <- train(classe ~ ., data=training, method="rf")
+Imp <- varImp(fitRf)
+#use top 20 variables
+varImp20<-rownames(Imp$importance)[order(Imp$importance, decreasing=TRUE)[1:20]]
+varImp20<-c(varImp20,"classe")
+training<-training[,varImp20]
+trainver<-trainver[,varImp20]
+varImp20
+```
+
+##Model selection
+Here we will try a few different methods
+```{r Model Selection}
+set.seed(30132)
+fitRf <- train(classe ~ ., data=training, method="rf")
+fitGBM <- train(classe ~ ., data=training, method="gbm", verbose=FALSE)
+fitLDA <- train(classe ~ ., data=training, method="lda", verbose=FALSE)
+predRf <- predict(fitRf, training)
+predGBM <- predict(fitGBM, training)
+predLDA <- predict(fitLDA, training)
+pred <- data.frame(predRf, predGBM, predLDA, diagnosis=training$classe)
+# Stack the predictions together using random forests ("rf")
+fit <- train(diagnosis ~., data=pred, method="rf")
+predFit <- predict(fit, training)
+c1 <- confusionMatrix(predRf, training$classe)$overall[1]
+c2 <- confusionMatrix(predGBM, training$classe)$overall[1]
+c3 <- confusionMatrix(predLDA, training$classe)$overall[1]
+c4 <- confusionMatrix(predFit, training$classe)$overall[1]
+print(paste(c1, c2, c3, c4))
+```
+
+Random Forest provides accurate results based on may iterations, and allows deeper inspection into individual trees.
+
+## Calculation of out of sample error
+
+```{r Out of sample error}
+prediction <- predict(fitRf, trainver)
+missClass = function(values, prediction) 
+{
+      sum(prediction != values)/length(values)
+}
+errRate = missClass(trainver$classe, prediction)
+errRate
+```
+
+#The prediction for the 20 rows in the test set
+```{r prediction}
+prediction <- predict(fitRf, testing)
+prediction
+```
